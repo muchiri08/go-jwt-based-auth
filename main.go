@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/golang-jwt/jwt/v5/request"
+	"github.com/gorilla/mux"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -21,32 +23,11 @@ type Response struct {
 
 // HealthcheckHandler return the date and time
 func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
-	tokenString, err := request.HeaderExtractor{"access_token"}.ExtractToken(r)
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			// Don't forget to validate the alg is what you expect:
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		//hmacSampleSecret is a []byte containing your secret, e.g. []byte("my_secret_key")
-		return secretKey, nil
-	})
-	if err != nil {
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("Access Denied! Please check the access token."))
-		return
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if ok && token.Valid {
-		response := make(map[string]string)
-		//response["user"] = claims["username"]
-		response["time"] = time.Now().String()
-		response["user"] = claims["username"].(string)
-		responseJSON, _ := json.Marshal(response)
-		w.Write(responseJSON)
-	} else {
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(err.Error()))
-	}
+	response := make(map[string]string)
+	response["time"] = time.Now().String()
+	responseJSON, _ := json.Marshal(response)
+	w.Write(responseJSON)
+
 }
 
 // LoginHandler validates the user credentials
@@ -60,7 +41,7 @@ func getTokenHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.PostForm.Get("username")
 	password := r.PostForm.Get("password")
 
-	originalPassword, ok := users["username"]
+	originalPassword, ok := users[username]
 	if !ok {
 		http.Error(w, "User is not found!", http.StatusUnauthorized)
 		return
@@ -93,6 +74,59 @@ func getTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func AnotherHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+	w.Write([]byte(fmt.Sprintf("Hello %s and welcome.", name)))
+}
+
+func validateJWTMiddleware(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		//tokenString := r.Header.Get("access_token") -> This can also be used to get the token string from the req header
+		tokenString, err := request.HeaderExtractor{"access_token"}.ExtractToken(r)
+		//validating jwt
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Don't forget to validate the alg is what you expect:
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return secretKey, nil
+		})
+		if err != nil {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("Permission Denied!"))
+			return
+		}
+
+		if !token.Valid {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("Permission denied!"))
+			return
+		}
+
+		handler.ServeHTTP(w, r)
+	})
+}
+
 func main() {
+	r := mux.NewRouter()
+	r.HandleFunc("/", getTokenHandler)
+	r.HandleFunc("/getToken", getTokenHandler)
+
+	req := r.PathPrefix("/api").Subrouter()
+	req.HandleFunc("/welcome/{name}", AnotherHandler)
+	req.HandleFunc("/healthcheck", HealthcheckHandler).Methods("GET")
+	req.Use(validateJWTMiddleware)
+
+	server := &http.Server{
+		Handler: r,
+		Addr:    "127.0.0.1:8000",
+		// Good practice: enforce timeouts for servers you create!
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
+
+	log.Println("server up and running...")
+	log.Fatal(server.ListenAndServe())
 
 }
