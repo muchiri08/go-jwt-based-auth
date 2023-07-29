@@ -49,6 +49,50 @@ func HealthcheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// LoginHandler validates the user credentials
+func getTokenHandler(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseForm()
+	if err != nil {
+		http.Error(w, "Please pass the data as URL form encoded", http.StatusBadRequest)
+		return
+	}
+
+	username := r.PostForm.Get("username")
+	password := r.PostForm.Get("password")
+
+	originalPassword, ok := users["username"]
+	if !ok {
+		http.Error(w, "User is not found!", http.StatusUnauthorized)
+		return
+	}
+	if originalPassword == password {
+		//create a claim map
+		claims := jwt.MapClaims{
+			"username":  username,
+			"ExpiresAt": 15000,
+			"IssuedAt":  time.Now().Unix(),
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString(secretKey)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(err.Error()))
+		}
+		response := Response{
+			Token:  tokenString,
+			Status: "success",
+		}
+		responseJSON, _ := json.Marshal(response)
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(responseJSON)
+
+	} else {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+}
+
 func main() {
 
 }
